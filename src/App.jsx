@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import FileSaver from "file-saver";
 import { wrap } from "comlink";
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Link, Route, Routes, useParams } from "react-router-dom";
 
 import ThreeContext from "./ThreeContext.jsx";
 import ReplicadMesh from "./ReplicadMesh.jsx";
-import { defaultModelSlug, getModel, listModels } from "./models/registry";
+import { getModel, listModels } from "./models/registry";
 
 import cadWorker from "./worker.js?worker";
 const cad = wrap(new cadWorker());
@@ -49,6 +49,45 @@ function ModelControls({ controls, values, onChange }) {
     </div>
   );
 }
+
+const splitPath = (value = "") => value.split("/").filter(Boolean);
+
+const encodeSegments = (segments = []) =>
+  segments.map((segment) => encodeURIComponent(segment)).join("/");
+
+const getFolderContents = (folderPath) => {
+  const currentSegments = splitPath(folderPath);
+  const folders = new Set();
+  const modelEntries = [];
+
+  models.forEach((model) => {
+    const slugSegments = splitPath(model.slug);
+    if (slugSegments.length < currentSegments.length) return;
+    const matches = currentSegments.every(
+      (segment, idx) => slugSegments[idx] === segment
+    );
+    if (!matches) return;
+
+    const remaining = slugSegments.slice(currentSegments.length);
+    if (remaining.length === 0) return;
+
+    if (remaining.length === 1) {
+      modelEntries.push({
+        slug: model.slug,
+        label: model.metadata?.name || remaining[0],
+        description: model.metadata?.description,
+      });
+      return;
+    }
+
+    folders.add(remaining[0]);
+  });
+
+  return {
+    folders: Array.from(folders).sort(),
+    models: modelEntries.sort((a, b) => a.label.localeCompare(b.label)),
+  };
+};
 
 function ModelViewer() {
   const { "*": modelSlugParam } = useParams();
@@ -243,6 +282,128 @@ function ModelViewer() {
   );
 }
 
+function ModelBrowser() {
+  const { "*": folderParam } = useParams();
+  const folderPath = folderParam ? decodeURIComponent(folderParam) : "";
+  const pathSegments = splitPath(folderPath);
+  const { folders, models: modelEntries } = useMemo(
+    () => getFolderContents(folderPath),
+    [folderPath]
+  );
+
+  const breadcrumb = [
+    { label: "Models", path: "/" },
+    ...pathSegments.map((segment, idx) => {
+      const partial = encodeSegments(pathSegments.slice(0, idx + 1));
+      return {
+        label: segment,
+        path: partial ? `/browse/${partial}` : "/",
+      };
+    }),
+  ];
+
+  const folderHref = (segment) => {
+    const next = encodeSegments([...pathSegments, segment]);
+    return next ? `/browse/${next}` : "/";
+  };
+
+  const modelHref = (slug) =>
+    `/model/${encodeSegments(splitPath(slug)) || ""}`;
+
+  const hasContents = folders.length > 0 || modelEntries.length > 0;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "1rem",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+        {breadcrumb.map((crumb, idx) => (
+          <React.Fragment key={crumb.path}>
+            {idx > 0 ? <span style={{ color: "#8a8a8a" }}>/</span> : null}
+            {idx === breadcrumb.length - 1 ? (
+              <span style={{ fontWeight: 700 }}>{crumb.label}</span>
+            ) : (
+              <Link to={crumb.path}>{crumb.label}</Link>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.5rem",
+        }}
+      >
+        {folders.map((folder) => (
+          <Link
+            key={folder}
+            to={folderHref(folder)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              padding: "0.75rem 0.85rem",
+              border: "1px solid #e1e1e1",
+              borderRadius: "0.65rem",
+              background: "#fff",
+              textDecoration: "none",
+              color: "inherit",
+            }}
+          >
+            <span aria-hidden="true">[DIR]</span>
+            <div>
+              <div style={{ fontWeight: 700 }}>{folder}</div>
+              <div style={{ color: "#6b6b6b", fontSize: "0.9rem" }}>
+                Folder
+              </div>
+            </div>
+          </Link>
+        ))}
+
+        {modelEntries.map((model) => (
+          <Link
+            key={model.slug}
+            to={modelHref(model.slug)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              padding: "0.75rem 0.85rem",
+              border: "1px solid #e1e1e1",
+              borderRadius: "0.65rem",
+              background: "#fff",
+              textDecoration: "none",
+              color: "inherit",
+            }}
+          >
+            <span aria-hidden="true">[M]</span>
+            <div>
+              <div style={{ fontWeight: 700 }}>{model.label}</div>
+              {model.description ? (
+                <div style={{ color: "#6b6b6b", fontSize: "0.9rem" }}>
+                  {model.description}
+                </div>
+              ) : null}
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      {!hasContents ? (
+        <div style={{ color: "#6b6b6b" }}>No folders or models here yet.</div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ReplicadApp() {
   return (
     <main
@@ -264,16 +425,8 @@ export default function ReplicadApp() {
         }}
       >
         <Routes>
-          <Route
-            path="/"
-            element={
-              defaultModelSlug ? (
-                <Navigate to={`/model/${defaultModelSlug}`} replace />
-              ) : (
-                <p>No models available.</p>
-              )
-            }
-          />
+          <Route path="/" element={<ModelBrowser />} />
+          <Route path="/browse/*" element={<ModelBrowser />} />
           <Route path="/model/*" element={<ModelViewer />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
