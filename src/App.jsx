@@ -20,6 +20,108 @@ const buildDefaultControls = (controls = {}) =>
 
 const cloneParams = (params = {}) => JSON.parse(JSON.stringify(params || {}));
 
+function FabricationSpinner({ phase }) {
+  const phaseLabel =
+    phase === "download" ? "Downloading model program..." : "Rendering geometry...";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        justifyItems: "center",
+        gap: "0.75rem",
+        padding: "1rem 1.25rem",
+        borderRadius: "0.85rem",
+        border: "1px solid #98b6c9",
+        background:
+          "radial-gradient(circle at 20% 20%, rgba(210,235,249,0.95), rgba(235,245,252,0.92) 45%, rgba(220,236,248,0.9))",
+        boxShadow: "0 14px 32px rgba(58, 93, 117, 0.24)",
+      }}
+    >
+      <style>
+        {`
+          @keyframes fabrication-rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+          @keyframes fabrication-pulse {
+            0%, 100% { opacity: 0.25; transform: scaleY(0.5); }
+            50% { opacity: 1; transform: scaleY(1); }
+          }
+        `}
+      </style>
+      <div
+        style={{
+          position: "relative",
+          width: "76px",
+          height: "76px",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            border: "2px solid rgba(68, 116, 145, 0.3)",
+            borderTop: "2px solid #4f89ae",
+            borderRadius: "50%",
+            animation: "fabrication-rotate 1.4s linear infinite",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: "10px",
+            border: "2px dashed rgba(39, 86, 116, 0.75)",
+            borderRadius: "50%",
+            animation: "fabrication-rotate 2.2s linear infinite reverse",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            width: "12px",
+            height: "12px",
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            background: "#2e5f80",
+            boxShadow: "0 0 14px rgba(46,95,128,0.45)",
+          }}
+        />
+      </div>
+      <div style={{ display: "flex", gap: "0.3rem", alignItems: "flex-end", height: "16px" }}>
+        {[0, 1, 2, 3, 4].map((bar) => (
+          <span
+            key={bar}
+            style={{
+              width: "5px",
+              height: "100%",
+              borderRadius: "999px",
+              transformOrigin: "bottom center",
+              background: "#3f6f8f",
+              animation: "fabrication-pulse 0.9s ease-in-out infinite",
+              animationDelay: `${bar * 0.1}s`,
+            }}
+          />
+        ))}
+      </div>
+      <div
+        style={{
+          fontSize: "0.82rem",
+          fontWeight: 700,
+          letterSpacing: "0.08em",
+          color: "#29516d",
+          textTransform: "uppercase",
+        }}
+      >
+        Fabrication Pipeline
+      </div>
+      <div style={{ fontSize: "0.92rem", color: "#2f4f64" }}>{phaseLabel}</div>
+    </div>
+  );
+}
+
 function ModelControls({ controls, values, onChange }) {
   if (!controls || Object.keys(controls).length === 0) return null;
 
@@ -466,12 +568,13 @@ function ModelViewer({ models }) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "1.25em",
                 background:
-                  "linear-gradient(135deg, rgba(255,255,255,0.65), rgba(245,245,245,0.65))",
+                  "linear-gradient(130deg, rgba(242,248,252,0.82), rgba(231,240,247,0.8))",
               }}
             >
-              {modelConfigLoading ? "Loading model..." : "Loading..."}
+              <FabricationSpinner
+                phase={modelConfigLoading ? "download" : "render"}
+              />
             </div>
           )}
           {!isBusy && mesh ? (
