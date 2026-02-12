@@ -5,12 +5,9 @@ import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import ThreeContext from "./ThreeContext.jsx";
 import ReplicadMesh from "./ReplicadMesh.jsx";
-import { getModel, listModels } from "./models/registry";
 
-import cadWorker from "./worker.js?worker";
+import cadWorker from "./worker.js?worker&format=es";
 const cad = wrap(new cadWorker());
-
-const models = listModels();
 
 const buildDefaultControls = (controls = {}) =>
   Object.entries(controls).reduce(
@@ -148,7 +145,7 @@ const splitPath = (value = "") => value.split("/").filter(Boolean);
 const encodeSegments = (segments = []) =>
   segments.map((segment) => encodeURIComponent(segment)).join("/");
 
-const getFolderContents = (folderPath) => {
+const getFolderContents = (models, folderPath) => {
   const currentSegments = splitPath(folderPath);
   const folders = new Set();
   const modelEntries = [];
@@ -203,9 +200,14 @@ const updateParamAtPath = (params, path, nextValue) => {
   };
 };
 
-function ModelViewer() {
+function ModelViewer({ models }) {
   const { "*": modelSlugParam } = useParams();
   const modelSlug = modelSlugParam ? decodeURIComponent(modelSlugParam) : "";
+  const modelSlugSet = useMemo(
+    () => new Set(models.map((model) => model.slug)),
+    [models]
+  );
+  const modelExists = modelSlugSet.has(modelSlug);
   const pathSegments = splitPath(modelSlug);
   const breadcrumb = [
     { label: "Models", path: "/" },
@@ -217,7 +219,7 @@ function ModelViewer() {
       };
     }),
   ];
-  const activeModel = useMemo(() => getModel(modelSlug), [modelSlug]);
+  const [activeModel, setActiveModel] = useState(null);
   const usesControls =
     activeModel?.controls && Object.keys(activeModel.controls).length > 0;
   const hasDefaultParams =
@@ -233,12 +235,45 @@ function ModelViewer() {
   );
   const [draftParams, setDraftParams] = useState(() => buildInitialParams());
   const [mesh, setMesh] = useState(null);
+  const [modelConfigLoading, setModelConfigLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [modelConfigError, setModelConfigError] = useState(null);
   const [error, setError] = useState(null);
   const [showGrid, setShowGrid] = useState(true);
   const [configOpen, setConfigOpen] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+    setActiveModel(null);
+    setModelConfigError(null);
+
+    if (!modelExists) {
+      setModelConfigLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setModelConfigLoading(true);
+    cad
+      .getModelConfig(modelSlug)
+      .then((model) => {
+        if (!cancelled) setActiveModel(model);
+      })
+      .catch((err) => {
+        if (!cancelled) setModelConfigError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setModelConfigLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modelExists, modelSlug]);
+
+  useEffect(() => {
+    if (!activeModel) return;
     const initial = buildInitialParams();
     setAppliedParams(initial);
     setDraftParams(initial);
@@ -246,7 +281,7 @@ function ModelViewer() {
   }, [activeModel, modelSlug]);
 
   useEffect(() => {
-    if (!activeModel) return;
+    if (!activeModel || modelConfigLoading) return;
 
     let cancelled = false;
     setLoading(true);
@@ -268,7 +303,7 @@ function ModelViewer() {
     return () => {
       cancelled = true;
     };
-  }, [activeModel, modelSlug, appliedParams]);
+  }, [activeModel, modelSlug, appliedParams, modelConfigLoading]);
 
   const downloadModel = async (format = "stl") => {
     if (!activeModel) return;
@@ -281,9 +316,10 @@ function ModelViewer() {
   const appliedKey = JSON.stringify(appliedParams);
   const draftKey = JSON.stringify(draftParams);
   const isDirty = appliedKey !== draftKey;
+  const isBusy = modelConfigLoading || loading;
 
   if (!models.length) return <p>No models found in /src/models.</p>;
-  if (!activeModel)
+  if (!modelExists)
     return (
       <div style={{ padding: "1rem 0" }}>
         <h2 style={{ margin: "0 0 0.5rem" }}>404: Model not found</h2>
@@ -350,14 +386,14 @@ function ModelViewer() {
           </label>
           <button
             onClick={() => downloadModel("stl")}
-            disabled={loading}
+            disabled={isBusy}
             style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
           >
             Download STL
           </button>
           <button
             onClick={() => downloadModel("step")}
-            disabled={loading}
+            disabled={isBusy}
             style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
           >
             Download STEP
@@ -368,7 +404,7 @@ function ModelViewer() {
               setAppliedParams(initial);
               setDraftParams(initial);
             }}
-            disabled={loading}
+            disabled={isBusy}
             style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
           >
             Reset controls
@@ -406,7 +442,7 @@ function ModelViewer() {
             background: "#f5f5f5",
           }}
         >
-          {error && (
+          {(error || modelConfigError) && (
             <div
               style={{
                 position: "absolute",
@@ -419,10 +455,10 @@ function ModelViewer() {
                 textAlign: "center",
               }}
             >
-              Failed to generate model: {error.message}
+              Failed to load model: {(modelConfigError || error)?.message}
             </div>
           )}
-          {loading && (
+          {isBusy && (
             <div
               style={{
                 position: "absolute",
@@ -435,10 +471,10 @@ function ModelViewer() {
                   "linear-gradient(135deg, rgba(255,255,255,0.65), rgba(245,245,245,0.65))",
               }}
             >
-              Loading...
+              {modelConfigLoading ? "Loading model..." : "Loading..."}
             </div>
           )}
-          {!loading && mesh ? (
+          {!isBusy && mesh ? (
             <ThreeContext showGrid={showGrid}>
               <ReplicadMesh edges={mesh.edges} faces={mesh.faces} />
             </ThreeContext>
@@ -462,7 +498,7 @@ function ModelViewer() {
           >
             <button
               onClick={() => setAppliedParams(cloneParams(draftParams))}
-              disabled={!isDirty || loading}
+              disabled={!isDirty || isBusy}
               style={{
                 width: "100%",
                 padding: "0.35rem",
@@ -472,7 +508,7 @@ function ModelViewer() {
                 color: "#fff",
                 border: "1px solid #7d99ab",
                 borderRadius: "0.35rem",
-                opacity: !isDirty || loading ? 0.65 : 1,
+                opacity: !isDirty || isBusy ? 0.65 : 1,
               }}
             >
               Apply params
@@ -503,13 +539,13 @@ function ModelViewer() {
   );
 }
 
-function ModelBrowser() {
+function ModelBrowser({ models }) {
   const { "*": folderParam } = useParams();
   const folderPath = folderParam ? decodeURIComponent(folderParam) : "";
   const pathSegments = splitPath(folderPath);
   const { folders, models: modelEntries } = useMemo(
-    () => getFolderContents(folderPath),
-    [folderPath]
+    () => getFolderContents(models, folderPath),
+    [models, folderPath]
   );
 
   const breadcrumb = [
@@ -623,6 +659,32 @@ function ModelBrowser() {
 }
 
 export default function ReplicadApp() {
+  const [models, setModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setModelsLoading(true);
+    setModelsError(null);
+
+    cad
+      .serialiseModels()
+      .then((entries) => {
+        if (!cancelled) setModels(entries || []);
+      })
+      .catch((err) => {
+        if (!cancelled) setModelsError(err);
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <main
       style={{
@@ -644,20 +706,31 @@ export default function ReplicadApp() {
           flexDirection: "column",
         }}
       >
-        <Routes>
-          <Route path="/" element={<ModelBrowser />} />
-          <Route path="/browse/*" element={<ModelBrowser />} />
-          <Route path="/model/*" element={<ModelViewerWrapper />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
+        {modelsError ? (
+          <div style={{ padding: "1rem 0", color: "tomato" }}>
+            Failed to load model list: {modelsError.message}
+          </div>
+        ) : modelsLoading ? (
+          <div style={{ padding: "1rem 0" }}>Loading models...</div>
+        ) : (
+          <Routes>
+            <Route path="/" element={<ModelBrowser models={models} />} />
+            <Route path="/browse/*" element={<ModelBrowser models={models} />} />
+            <Route
+              path="/model/*"
+              element={<ModelViewerWrapper models={models} />}
+            />
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        )}
       </div>
     </main>
   );
 }
 
-function ModelViewerWrapper() {
+function ModelViewerWrapper({ models }) {
   const location = useLocation();
-  return <ModelViewer key={location.pathname} />;
+  return <ModelViewer key={location.pathname} models={models} />;
 }
 
 function NotFoundPage() {
