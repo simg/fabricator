@@ -1,6 +1,8 @@
 import {
   makeBaseBox,
   makeCylinder,
+  Plane,
+  PlaneName,
   Point,
   Shape3D,
   Sketch,
@@ -125,11 +127,11 @@ const buildSpoke = (index: number, config: SpokeConfig): Shape3D => {
       const y = radius * Math.sin(theta);
       return [x, y];
     },
-    { origin: [0, 0, config.zCenter], direction: ZDIR },
+    { plane: "XY", origin: [0, 0, config.zCenter] },
     { pointsCount: 48 }
   );
 
-  const profile = (plane, origin) =>
+  const profile = (plane: Plane | PlaneName, origin: Point | number) =>
     new Sketcher(plane, origin)
       .movePointerTo([-config.thickness / 2, -config.width / 2])
       .hLine(config.thickness)
@@ -137,7 +139,7 @@ const buildSpoke = (index: number, config: SpokeConfig): Shape3D => {
       .hLine(-config.thickness)
       .close();
 
-  let spoke = path.sweepSketch(profile);
+  let spoke = path.sweepSketch(profile) as Shape3D;
 
   if (tilt !== 0) {
     spoke = spoke.rotate(tilt, [startX, 0, config.zCenter], XDIR);
@@ -148,10 +150,11 @@ const buildSpoke = (index: number, config: SpokeConfig): Shape3D => {
 };
 
 const buildSpokes = (config: SpokeConfig): Shape3D => {
-  let spokes = buildSpoke(0, config);
+  let spokes: Shape3D = buildSpoke(0, config);
 
   for (let i = 1; i < config.count; i += 1) {
-    spokes = spokes.fuse(buildSpoke(i, config));
+    const fused = spokes.fuse(buildSpoke(i, config));
+    spokes = fused || spokes;
   }
 
   return spokes;
@@ -164,22 +167,25 @@ const createPocketCuts = (
   const pocketH = config.dongleHeight + config.clearance * 2;
   const pocketLen = config.bodyLength + config.leadIn;
 
-  const pocket = makeBaseBox(pocketW, pocketH, pocketLen).translate(
-    0,
-    0,
-    config.hubZ - pocketLen / 2
-  );
+  const pocket = makeBaseBox(pocketW, pocketH, pocketLen)
+    .translate(0, 0, config.hubZ - pocketLen / 2) as Shape3D;
 
   const leadIn = makeBaseBox(
     pocketW + 2.0,
     pocketH + 2.0,
     config.leadIn
-  ).translate(0, 0, config.hubZ - pocketLen / 2);
+  )
+    .translate(0, 0, config.hubZ - pocketLen / 2) as Shape3D;
 
   return { pocket, leadIn };
 };
 
-export default function main(): Shape3D {
+export default function main(config: Partial<{
+  collar: CollarConfig;
+  hub: HubConfig;
+  spokes: SpokeConfig;
+  pocket: PocketConfig;
+}> = {}): Shape3D {
   const collarConfig: CollarConfig = {
     mouthDiameter: 68.0,
     tubeInnerDiameter: 69.0,
@@ -221,14 +227,19 @@ export default function main(): Shape3D {
     leadIn: 6.0,
     hubZ: hubConfig.centerZ,
   };
+  const mergedCollar = { ...collarConfig, ...(config.collar || {}) };
+  const mergedHub = { ...hubConfig, ...(config.hub || {}) };
+  const mergedSpokes = { ...spokeConfig, ...(config.spokes || {}) };
+  const mergedPocket = { ...pocketConfig, ...(config.pocket || {}) };
 
-  const collar = buildCollar(collarConfig, collarDimensions);
-  const hub = buildHub(hubConfig);
-  const spokes = buildSpokes(spokeConfig);
+  const collar = buildCollar(mergedCollar, calculateCollarDimensions(mergedCollar));
+  const hub = buildHub(mergedHub);
+  const spokes = buildSpokes(mergedSpokes);
 
-  let part: Shape3D = collar.fuse(hub).fuse(spokes);
+  const collarHub = collar.fuse(hub) || collar;
+  let part: Shape3D = collarHub.fuse(spokes) || collarHub;
 
-  const { pocket, leadIn } = createPocketCuts(pocketConfig);
+  const { pocket, leadIn } = createPocketCuts(mergedPocket);
   part = part.cut(pocket);
   part = part.cut(leadIn);
 
