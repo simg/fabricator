@@ -1,30 +1,31 @@
 {
-  "name": "replicad-app-example",
-  "version": "0.20.5",
-  "description": "A simple React app based on replicad.",
+  "name": "fabricator",
+  "version": "0.1",
+  "description": "A 3d Printing workbench based on Replicad",
   "private": true,
   "license": "MIT",
+  "homepage": "https://simg.github.io/fabricator/",
   "scripts": {
     "start": "vite",
     "build": "vite build",
     "serve": "vite preview"
   },
   "dependencies": {
-    "@react-three/drei": "9.92.7",
-    "@react-three/fiber": "8.13.6",
+    "@react-three/drei": "10.7.7",
+    "@react-three/fiber": "9.5.0",
     "comlink": "^4.3.1",
     "file-saver": "^2.0.5",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-router-dom": "^6.22.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-router-dom": "^7.13.0",
     "replicad": "^0.20.5",
     "replicad-opencascadejs": "^0.20.2",
     "replicad-threejs-helper": "^0.20.0",
-    "three": "^0.155.0"
+    "three": "^0.182.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "3.0.1",
-    "vite": "4.0.4"
+    "@vitejs/plugin-react": "5.1.4",
+    "vite": "7.3.1"
   },
   "browserslist": [
     ">0.2%",
