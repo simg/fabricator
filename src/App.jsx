@@ -315,9 +315,14 @@ function ModelViewer({ models }) {
     { label: "Models", path: "/" },
     ...pathSegments.map((segment, idx) => {
       const partial = encodeSegments(pathSegments.slice(0, idx + 1));
+      const isLast = idx === pathSegments.length - 1;
       return {
         label: segment,
-        path: partial ? `/model/${partial}` : "/",
+        path: partial
+          ? isLast
+            ? `/model/${partial}`
+            : `/browse/${partial}`
+          : "/",
       };
     }),
   ];
