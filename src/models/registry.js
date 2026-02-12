@@ -12,6 +12,7 @@ const normaliseModule = (slug, module) => {
     slug,
     build,
     controls: module.controls || {},
+    defaultParams: module.defaultParams || module.DEFAULT_CONFIG,
     metadata: module.metadata || {},
   };
 };

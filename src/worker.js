@@ -20,10 +20,33 @@ const init = async () => {
 };
 const started = init();
 
+const normaliseShape = (shape) => {
+  if (Array.isArray(shape)) {
+    const solids = shape.filter(Boolean);
+    if (solids.length === 0) {
+      throw new Error("Model returned no geometry");
+    }
+    return solids.reduce((acc, solid) => {
+      if (!acc) return solid;
+      const fused = acc.fuse(solid);
+      return fused || acc;
+    }, null);
+  }
+  return shape;
+};
+
 const buildModel = (slug, params = {}) => {
   const model = getModel(slug);
   if (!model) throw new Error(`Model "${slug}" is not available`);
-  return model.build(params);
+  const fn = model.build;
+
+  // Support both (params) and (api, params) signatures
+  const built =
+    fn.length >= 2 ? fn(undefined, params) : fn(params);
+
+  const shape = normaliseShape(built);
+  if (!shape) throw new Error("Model did not return geometry");
+  return shape;
 };
 
 const serialiseModels = () =>

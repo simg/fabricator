@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import FileSaver from "file-saver";
 import { wrap } from "comlink";
-import { Link, Route, Routes, useParams } from "react-router-dom";
+import { Link, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import ThreeContext from "./ThreeContext.jsx";
 import ReplicadMesh from "./ReplicadMesh.jsx";
@@ -21,20 +21,48 @@ const buildDefaultControls = (controls = {}) =>
     {}
   );
 
+const cloneParams = (params = {}) => JSON.parse(JSON.stringify(params || {}));
+
 function ModelControls({ controls, values, onChange }) {
   if (!controls || Object.keys(controls).length === 0) return null;
 
   return (
-    <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr",
+        gap: "0.35rem",
+      }}
+    >
       {Object.entries(controls).map(([key, definition]) => (
-        <label key={key} style={{ display: "grid", gap: "0.35rem" }}>
-          <span style={{ fontWeight: 600 }}>{definition.label || key}</span>
+        <label
+          key={key}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 110px",
+            gap: "0.35rem",
+            alignItems: "center",
+            padding: "0.25rem 0.35rem",
+            border: "1px solid #e0e5ea",
+            borderRadius: "0.4rem",
+            background: "#f9fbfd",
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+            {definition.label || key}
+          </span>
           <input
             type="number"
             min={definition.min}
             max={definition.max}
             step={definition.step || 1}
             value={values[key]}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              fontSize: "0.85rem",
+              padding: "0.3rem 0.35rem",
+            }}
             onChange={(event) => {
               const nextValue = Number(event.target.value);
               const clamped = Math.min(
@@ -46,6 +74,71 @@ function ModelControls({ controls, values, onChange }) {
           />
         </label>
       ))}
+    </div>
+  );
+}
+
+function DefaultParamsForm({ params, onChange }) {
+  const fields = flattenParams(params);
+
+  if (!fields.length)
+    return (
+      <div style={{ color: "#6b6b6b", fontSize: "0.95rem" }}>
+        No configurable parameters exposed.
+      </div>
+    );
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr",
+        gap: "0.35rem",
+      }}
+    >
+      {fields.map(({ path, value }) => {
+        const label = path.join(" / ");
+        const isBoolean = typeof value === "boolean";
+        return (
+          <label
+            key={label}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 110px",
+              gap: "0.35rem",
+              alignItems: "center",
+              padding: "0.25rem 0.35rem",
+              border: "1px solid #e0e5ea",
+              borderRadius: "0.4rem",
+              background: "#f9fbfd",
+            }}
+          >
+            <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+              {label}
+            </span>
+            {isBoolean ? (
+              <input
+                type="checkbox"
+                checked={Boolean(value)}
+                onChange={(event) => onChange(path, event.target.checked)}
+              />
+            ) : (
+              <input
+                type="number"
+                value={value ?? 0}
+                step="0.1"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "0.3rem 0.35rem",
+                  fontSize: "0.85rem",
+                }}
+                onChange={(event) => onChange(path, Number(event.target.value))}
+              />
+            )}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -89,23 +182,68 @@ const getFolderContents = (folderPath) => {
   };
 };
 
+const flattenParams = (params, prefix = []) =>
+  Object.entries(params || {}).flatMap(([key, value]) => {
+    const path = [...prefix, key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return flattenParams(value, path);
+    }
+    return [{ path, value }];
+  });
+
+const updateParamAtPath = (params, path, nextValue) => {
+  if (path.length === 0) return nextValue;
+  const [head, ...rest] = path;
+  return {
+    ...params,
+    [head]:
+      rest.length === 0
+        ? nextValue
+        : updateParamAtPath(params?.[head] || {}, rest, nextValue),
+  };
+};
+
 function ModelViewer() {
   const { "*": modelSlugParam } = useParams();
   const modelSlug = modelSlugParam ? decodeURIComponent(modelSlugParam) : "";
+  const pathSegments = splitPath(modelSlug);
+  const breadcrumb = [
+    { label: "Models", path: "/" },
+    ...pathSegments.map((segment, idx) => {
+      const partial = encodeSegments(pathSegments.slice(0, idx + 1));
+      return {
+        label: segment,
+        path: partial ? `/model/${partial}` : "/",
+      };
+    }),
+  ];
   const activeModel = useMemo(() => getModel(modelSlug), [modelSlug]);
-  const [controls, setControls] = useState(() =>
-    buildDefaultControls(activeModel?.controls)
+  const usesControls =
+    activeModel?.controls && Object.keys(activeModel.controls).length > 0;
+  const hasDefaultParams =
+    activeModel?.defaultParams &&
+    Object.keys(activeModel.defaultParams).length > 0;
+  const buildInitialParams = () => {
+    if (usesControls) return buildDefaultControls(activeModel.controls);
+    if (hasDefaultParams) return cloneParams(activeModel.defaultParams);
+    return {};
+  };
+  const [appliedParams, setAppliedParams] = useState(() =>
+    buildInitialParams()
   );
+  const [draftParams, setDraftParams] = useState(() => buildInitialParams());
   const [mesh, setMesh] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showGrid, setShowGrid] = useState(true);
-  const hasControls =
-    activeModel?.controls && Object.keys(activeModel.controls).length > 0;
+  const [configOpen, setConfigOpen] = useState(true);
 
   useEffect(() => {
-    setControls(buildDefaultControls(activeModel?.controls));
-  }, [activeModel]);
+    const initial = buildInitialParams();
+    setAppliedParams(initial);
+    setDraftParams(initial);
+    setConfigOpen(true);
+  }, [activeModel, modelSlug]);
 
   useEffect(() => {
     if (!activeModel) return;
@@ -116,7 +254,7 @@ function ModelViewer() {
     setMesh(null);
 
     cad
-      .createMesh(modelSlug, controls)
+      .createMesh(modelSlug, appliedParams)
       .then((m) => {
         if (!cancelled) setMesh(m);
       })
@@ -130,15 +268,19 @@ function ModelViewer() {
     return () => {
       cancelled = true;
     };
-  }, [activeModel, modelSlug, controls]);
+  }, [activeModel, modelSlug, appliedParams]);
 
   const downloadModel = async (format = "stl") => {
     if (!activeModel) return;
-    const blob = await cad.createBlob(modelSlug, controls, format);
+    const blob = await cad.createBlob(modelSlug, appliedParams, format);
     const extension = format === "step" ? "step" : "stl";
     const safeSlug = modelSlug.replace(/[\\/]+/g, "-") || "model";
     FileSaver.saveAs(blob, `${safeSlug}.${extension}`);
   };
+
+  const appliedKey = JSON.stringify(appliedParams);
+  const draftKey = JSON.stringify(draftParams);
+  const isDirty = appliedKey !== draftKey;
 
   if (!models.length) return <p>No models found in /src/models.</p>;
   if (!activeModel)
@@ -153,6 +295,7 @@ function ModelViewer() {
 
   return (
     <div
+      key={modelSlug}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -164,24 +307,39 @@ function ModelViewer() {
       <div
         style={{
           display: "flex",
+          gap: "0.75rem",
           alignItems: "center",
-          gap: "1rem",
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontWeight: 700 }}>
-          {activeModel.metadata?.name || activeModel.slug}
+        <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+          {breadcrumb.map((crumb, idx) => (
+            <React.Fragment key={crumb.path}>
+              {idx > 0 ? <span style={{ color: "#8a8a8a" }}>/</span> : null}
+              {idx === breadcrumb.length - 1 ? (
+                <span style={{ fontWeight: 700 }}>{crumb.label}</span>
+              ) : (
+                <Link to={crumb.path}>{crumb.label}</Link>
+              )}
+            </React.Fragment>
+          ))}
         </div>
         <div
           style={{
             marginLeft: "auto",
             display: "flex",
-            gap: "0.75rem",
+            gap: "0.4rem",
             alignItems: "center",
+            flexWrap: "wrap",
           }}
         >
           <label
-            style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.35rem",
+              fontSize: "0.9rem",
+            }}
           >
             <input
               type="checkbox"
@@ -190,94 +348,157 @@ function ModelViewer() {
             />
             Show grid
           </label>
-          <button onClick={() => downloadModel("stl")} disabled={loading}>
+          <button
+            onClick={() => downloadModel("stl")}
+            disabled={loading}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
+          >
             Download STL
           </button>
-          <button onClick={() => downloadModel("step")} disabled={loading}>
+          <button
+            onClick={() => downloadModel("step")}
+            disabled={loading}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
+          >
             Download STEP
           </button>
           <button
-            onClick={() =>
-              setControls(buildDefaultControls(activeModel?.controls))
-            }
+            onClick={() => {
+              const initial = buildInitialParams();
+              setAppliedParams(initial);
+              setDraftParams(initial);
+            }}
             disabled={loading}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
           >
             Reset controls
           </button>
+          {usesControls || hasDefaultParams ? (
+            <button
+              onClick={() => setConfigOpen((open) => !open)}
+              style={{
+                padding: "0.25rem 0.5rem",
+                fontSize: "0.85rem",
+              }}
+            >
+              {configOpen ? "Hide config" : "Show config"}
+            </button>
+          ) : null}
         </div>
       </div>
 
-      {hasControls ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.5rem",
-            padding: "0.75rem 1rem",
-            border: "1px solid #e1e1e1",
-            borderRadius: "0.75rem",
-            background: "#fff",
-          }}
-        >
-          <ModelControls
-            controls={activeModel.controls}
-            values={controls}
-            onChange={(key, value) =>
-              setControls((current) => ({ ...current, [key]: value }))
-            }
-          />
-        </div>
-      ) : null}
-
-      <section
+      <div
         style={{
+          display: "flex",
+          gap: "0.75rem",
           flex: 1,
           minHeight: 0,
-          position: "relative",
-          borderRadius: "0.75rem",
-          border: "1px solid #e1e1e1",
-          overflow: "hidden",
-          background: "#f5f5f5",
         }}
       >
-        {error && (
-          <div
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            position: "relative",
+            borderRadius: "0.75rem",
+            border: "1px solid #e1e1e1",
+            overflow: "hidden",
+            background: "#f5f5f5",
+          }}
+        >
+          {error && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "tomato",
+                padding: "1rem",
+                textAlign: "center",
+              }}
+            >
+              Failed to generate model: {error.message}
+            </div>
+          )}
+          {loading && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1.25em",
+                background:
+                  "linear-gradient(135deg, rgba(255,255,255,0.65), rgba(245,245,245,0.65))",
+              }}
+            >
+              Loading...
+            </div>
+          )}
+          {!loading && mesh ? (
+            <ThreeContext showGrid={showGrid}>
+              <ReplicadMesh edges={mesh.edges} faces={mesh.faces} />
+            </ThreeContext>
+          ) : null}
+        </div>
+
+        {configOpen && (usesControls || hasDefaultParams) ? (
+          <aside
             style={{
-              position: "absolute",
-              inset: 0,
+              flex: "0 0 320px",
+              maxWidth: "320px",
+              padding: "0.5rem",
+              border: "1px solid #d7d7d7",
+              borderRadius: "0.75rem",
+              background: "#f7f9fb",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "tomato",
-              padding: "1rem",
-              textAlign: "center",
+              flexDirection: "column",
+              gap: "0.5rem",
+              alignSelf: "stretch",
             }}
           >
-            Failed to generate model: {error.message}
-          </div>
-        )}
-        {loading && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "1.25em",
-              background:
-                "linear-gradient(135deg, rgba(255,255,255,0.65), rgba(245,245,245,0.65))",
-            }}
-          >
-            Loading...
-          </div>
-        )}
-        {!loading && mesh ? (
-          <ThreeContext showGrid={showGrid}>
-            <ReplicadMesh edges={mesh.edges} faces={mesh.faces} />
-          </ThreeContext>
+            <button
+              onClick={() => setAppliedParams(cloneParams(draftParams))}
+              disabled={!isDirty || loading}
+              style={{
+                width: "100%",
+                padding: "0.35rem",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                background: "#8fa9bb",
+                color: "#fff",
+                border: "1px solid #7d99ab",
+                borderRadius: "0.35rem",
+                opacity: !isDirty || loading ? 0.65 : 1,
+              }}
+            >
+              Apply params
+            </button>
+            {usesControls ? (
+              <ModelControls
+                controls={activeModel.controls}
+                values={draftParams}
+                onChange={(key, value) =>
+                  setDraftParams((current) => ({ ...current, [key]: value }))
+                }
+              />
+            ) : null}
+            {!usesControls && hasDefaultParams ? (
+              <DefaultParamsForm
+                params={draftParams}
+                onChange={(path, value) =>
+                  setDraftParams((current) =>
+                    updateParamAtPath(current, path, value)
+                  )
+                }
+              />
+            ) : null}
+          </aside>
         ) : null}
-      </section>
+      </div>
     </div>
   );
 }
@@ -307,8 +528,7 @@ function ModelBrowser() {
     return next ? `/browse/${next}` : "/";
   };
 
-  const modelHref = (slug) =>
-    `/model/${encodeSegments(splitPath(slug)) || ""}`;
+  const modelHref = (slug) => `/model/${encodeSegments(splitPath(slug)) || ""}`;
 
   const hasContents = folders.length > 0 || modelEntries.length > 0;
 
@@ -361,9 +581,7 @@ function ModelBrowser() {
             <span aria-hidden="true">[DIR]</span>
             <div>
               <div style={{ fontWeight: 700 }}>{folder}</div>
-              <div style={{ color: "#6b6b6b", fontSize: "0.9rem" }}>
-                Folder
-              </div>
+              <div style={{ color: "#6b6b6b", fontSize: "0.9rem" }}>Folder</div>
             </div>
           </Link>
         ))}
@@ -410,6 +628,8 @@ export default function ReplicadApp() {
       style={{
         padding: "1rem",
         height: "100vh",
+        maxWidth: "100%",
+        margin: 0,
         display: "flex",
         flexDirection: "column",
         gap: "1rem",
@@ -427,12 +647,17 @@ export default function ReplicadApp() {
         <Routes>
           <Route path="/" element={<ModelBrowser />} />
           <Route path="/browse/*" element={<ModelBrowser />} />
-          <Route path="/model/*" element={<ModelViewer />} />
+          <Route path="/model/*" element={<ModelViewerWrapper />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </div>
     </main>
   );
+}
+
+function ModelViewerWrapper() {
+  const location = useLocation();
+  return <ModelViewer key={location.pathname} />;
 }
 
 function NotFoundPage() {
