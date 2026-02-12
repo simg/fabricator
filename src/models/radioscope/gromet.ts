@@ -1,10 +1,4 @@
-import {
-  makeBaseBox,
-  makeCompound,
-  makeCylinder,
-  Point,
-  Shape3D,
-} from "replicad";
+import { makeBaseBox, makeCompound, makeCylinder, Shape3D } from "replicad";
 
 interface GrommetConfig {
   holeLength: number; // along X
@@ -19,7 +13,7 @@ interface GrommetConfig {
   spacing: number;
 }
 
-const DEFAULT_CONFIG: GrommetConfig = {
+export const defaultParams: GrommetConfig = {
   holeLength: 16,
   holeWidth: 9,
   flangeMargin: 3,
@@ -79,7 +73,7 @@ const buildHalf = (kind: HalfKind, config: GrommetConfig): Shape3D => {
 
   // Female: slot runs along -Y from the hole; Male: along +Y.
   const slotY = (kind === "female" ? -slotLength / 2 : slotLength / 2);
-  const slot = makeBaseBox(slotWidth, slotLength, slotHeight).translate(
+  const slot: Shape3D = makeBaseBox(slotWidth, slotLength, slotHeight).translate(
     0,
     slotY,
     kind === "male" ? 0 : 0
@@ -106,11 +100,11 @@ const buildHalf = (kind: HalfKind, config: GrommetConfig): Shape3D => {
   return half;
 };
 
-export default function main(): Shape3D {
-  const config = DEFAULT_CONFIG;
+export default function main(config: Partial<GrommetConfig> = {}): Shape3D {
+  const resolved = { ...defaultParams, ...config };
 
-  const male = buildHalf("male", config);
-  const female = buildHalf("female", config).translate(config.spacing, 0, 0);
+  const male = buildHalf("male", resolved);
+  const female = buildHalf("female", resolved).translate(resolved.spacing, 0, 0);
 
-  return makeCompound([male, female]);
+  return makeCompound([male, female]) as Shape3D;
 }
