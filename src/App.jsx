@@ -19,6 +19,70 @@ const buildDefaultControls = (controls = {}) =>
   );
 
 const cloneParams = (params = {}) => JSON.parse(JSON.stringify(params || {}));
+const PARAMS_QUERY_KEY = "params";
+
+const toBase64Url = (value) =>
+  btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+
+const fromBase64Url = (value) => {
+  if (!value) return "";
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+  const needed = (4 - (padded.length % 4)) % 4;
+  return atob(`${padded}${"=".repeat(needed)}`);
+};
+
+const encodeSharedParams = (params = {}) => {
+  try {
+    return toBase64Url(JSON.stringify(params));
+  } catch {
+    return "";
+  }
+};
+
+const parseSharedParams = (search = "") => {
+  try {
+    const query = new URLSearchParams(search || "");
+    const encoded = query.get(PARAMS_QUERY_KEY);
+    if (!encoded) return null;
+    const decoded = fromBase64Url(encoded);
+    const parsed = JSON.parse(decoded);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const coerceParamsByTemplate = (template, candidate) => {
+  if (!template || typeof template !== "object" || Array.isArray(template)) {
+    return template;
+  }
+
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return cloneParams(template);
+  }
+
+  return Object.entries(template).reduce((acc, [key, value]) => {
+    const next = candidate[key];
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      acc[key] = coerceParamsByTemplate(value, next);
+      return acc;
+    }
+
+    if (typeof value === "number") {
+      acc[key] = Number.isFinite(Number(next)) ? Number(next) : value;
+      return acc;
+    }
+
+    if (typeof value === "boolean") {
+      acc[key] = typeof next === "boolean" ? next : value;
+      return acc;
+    }
+
+    acc[key] = value;
+    return acc;
+  }, {});
+};
 
 function FabricationSpinner({ phase }) {
   const phaseLabel =
@@ -304,6 +368,7 @@ const updateParamAtPath = (params, path, nextValue) => {
 
 function ModelViewer({ models }) {
   const { "*": modelSlugParam } = useParams();
+  const location = useLocation();
   const modelSlug = modelSlugParam ? decodeURIComponent(modelSlugParam) : "";
   const modelSlugSet = useMemo(
     () => new Set(models.map((model) => model.slug)),
@@ -348,6 +413,13 @@ function ModelViewer({ models }) {
   const [error, setError] = useState(null);
   const [showGrid, setShowGrid] = useState(true);
   const [configOpen, setConfigOpen] = useState(true);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareCopyLabel, setShareCopyLabel] = useState("Copy link");
+  const sharedParamsFromUrl = useMemo(
+    () => parseSharedParams(location.search),
+    [location.search]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -382,10 +454,13 @@ function ModelViewer({ models }) {
   useEffect(() => {
     if (!activeModel) return;
     const initial = buildInitialParams();
-    setAppliedParams(initial);
-    setDraftParams(initial);
+    const hydrated = sharedParamsFromUrl
+      ? coerceParamsByTemplate(initial, sharedParamsFromUrl)
+      : initial;
+    setAppliedParams(hydrated);
+    setDraftParams(cloneParams(hydrated));
     setConfigOpen(true);
-  }, [activeModel, modelSlug]);
+  }, [activeModel, modelSlug, sharedParamsFromUrl]);
 
   useEffect(() => {
     if (!activeModel || modelConfigLoading) return;
@@ -418,6 +493,37 @@ function ModelViewer({ models }) {
     const extension = format === "step" ? "step" : "stl";
     const safeSlug = modelSlug.replace(/[\\/]+/g, "-") || "model";
     FileSaver.saveAs(blob, `${safeSlug}.${extension}`);
+  };
+
+  const openShareDialog = () => {
+    if (typeof window === "undefined") return;
+    const encodedParams = encodeSharedParams(appliedParams);
+    const url = new URL(window.location.href);
+
+    if (encodedParams) {
+      url.searchParams.set(PARAMS_QUERY_KEY, encodedParams);
+    } else {
+      url.searchParams.delete(PARAMS_QUERY_KEY);
+    }
+
+    setShareUrl(url.toString());
+    setShareCopyLabel("Copy link");
+    setShareDialogOpen(true);
+  };
+
+  const copyShareUrl = async () => {
+    if (!shareUrl || typeof navigator === "undefined") return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        throw new Error("Clipboard API unavailable");
+      }
+      setShareCopyLabel("Copied");
+    } catch {
+      setShareCopyLabel("Copy failed");
+    }
   };
 
   const appliedKey = JSON.stringify(appliedParams);
@@ -515,6 +621,13 @@ function ModelViewer({ models }) {
             style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
           >
             Reset controls
+          </button>
+          <button
+            onClick={openShareDialog}
+            disabled={isBusy}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}
+          >
+            Share
           </button>
           {usesControls || hasDefaultParams ? (
             <button
@@ -643,6 +756,74 @@ function ModelViewer({ models }) {
           </aside>
         ) : null}
       </div>
+      {shareDialogOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 40,
+            background: "rgba(22,32,43,0.38)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            style={{
+              width: "min(760px, 94vw)",
+              background: "#fff",
+              borderRadius: "0.8rem",
+              border: "1px solid #d8dfe6",
+              boxShadow: "0 18px 38px rgba(16,24,32,0.24)",
+              padding: "0.9rem",
+              display: "grid",
+              gap: "0.65rem",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: "1rem" }}>
+              Share Params Link
+            </div>
+            <div style={{ color: "#5f6870", fontSize: "0.88rem" }}>
+              This URL encodes the current model parameters and restores them on load.
+            </div>
+            <input
+              type="text"
+              value={shareUrl}
+              readOnly
+              onFocus={(event) => event.target.select()}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "0.5rem 0.55rem",
+                borderRadius: "0.4rem",
+                border: "1px solid #ccd6df",
+                fontSize: "0.84rem",
+              }}
+            />
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "0.5rem",
+              }}
+            >
+              <button
+                onClick={() => setShareDialogOpen(false)}
+                style={{ padding: "0.3rem 0.65rem", fontSize: "0.85rem" }}
+              >
+                Close
+              </button>
+              <button
+                onClick={copyShareUrl}
+                style={{ padding: "0.3rem 0.65rem", fontSize: "0.85rem" }}
+              >
+                {shareCopyLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
